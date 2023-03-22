@@ -1,6 +1,3 @@
-
-
-
 import cv2
 
 # Define a callback function for the Canny trackbars
@@ -19,7 +16,7 @@ def on_canny_thresh_change(_):
     cv2.imshow('Puzzle Piece', img)
 
 # Load the input image
-img = cv2.imread('Puzzle Data/frame0033.jpg')
+img = cv2.imread('Puzzle Data/Phone Cam/IMG_0948.jpg')
 
 # Convert the image to grayscale
 gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
