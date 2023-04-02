@@ -1,6 +1,7 @@
 import cv2 as cv
 import numpy as np
 from matplotlib import pyplot as plt
+from scipy.spatial import distance as dist
 
 
 
@@ -24,7 +25,7 @@ def identify_contour(img, imshow = False):
     img_seg_cleaned = cv.morphologyEx(img_seg, cv.MORPH_CLOSE, kernel)
 
     # detect contours
-    contours, heirarchy = cv.findContours(img_seg_cleaned, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
+    contours, heirarchy = cv.findContours(img_seg, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
 
     # filter contours that are inside other contours
     filtered_contours = []
@@ -32,6 +33,7 @@ def identify_contour(img, imshow = False):
         if heirarchy[0][i][3] == -1 and cv.contourArea(contour) > MIN_AREA_CONTOUR:
             filtered_contours.append(contour)
 
+    # get largest contour
     largest_contour = sorted(filtered_contours, key=cv.contourArea, reverse=True)[0]
 
     if imshow:
@@ -42,7 +44,7 @@ def identify_contour(img, imshow = False):
         img_contour = cv.cvtColor(img_contour, cv.COLOR_BGR2RGB) # change to RGB (matplotlib uses RGB)
 
         # show images
-        fig, axs = plt.subplots(1,3, figsize = (10,5))
+        fig, axs = plt.subplots(1,3, figsize = (20,10))
         axs[0].imshow(img_seg, cmap = 'gray')
         axs[0].set_title("segmented image")
         axs[1].imshow(img_seg_cleaned, cmap = 'gray')
@@ -55,17 +57,49 @@ def identify_contour(img, imshow = False):
     
     return img, largest_contour
 
+# helper function to order pts tl, tr, br, bl
+def __order_points(pts):
+    # sort the points based on their x-coordinates
+    xSorted = pts[np.argsort(pts[:, 0]), :]
+
+    # grab the left-most and right-most points from the sorted
+    # x-roodinate points
+    leftMost = xSorted[:2, :]
+    rightMost = xSorted[2:, :]
+
+    # now, sort the left-most coordinates according to their
+    # y-coordinates so we can grab the top-left and bottom-left
+    # points, respectively
+    leftMost = leftMost[np.argsort(leftMost[:, 1]), :]
+    tl, bl = leftMost
+
+    # now that we have the top-left coordinate, use it as an
+    # anchor to calculate the Euclidean distance between the
+    # top-left and right-most points; by the Pythagorean
+    # theorem, the point with the largest distance will be
+    # our bottom-right point
+    D = dist.cdist(tl[np.newaxis], rightMost, "euclidean")[0]
+    br, tr = rightMost[np.argsort(D)[::-1], :]
+
+    # return the coordinates in top-left, top-right,
+    # bottom-right, and bottom-left order
+    return np.array([tl, tr, br, bl], dtype="int32")
+
+def __perspective_transform(): pass
+
 def minimum_cropped(img, contour, imshow = False):
     
     # find the minimum box rect of the contour
+    #TODO: min area quadrilateral instead of rectangle, as it is not always accurate
     rect = cv.minAreaRect(contour)
+
     box_original = cv.boxPoints(rect)
     box_original = np.int0(box_original)
 
     # get angle and center of rect
     angle = rect[2]
     if angle > 45:
-        angle = 90 - angle
+        angle = angle - 90 # rotate to y axis
     center = rect[0]
 
     # create a rotation matrix and rotate the image around the center point
@@ -75,11 +109,10 @@ def minimum_cropped(img, contour, imshow = False):
     # get box points and rotate box
     pts = np.int0(cv.transform(np.array([box_original]), M))[0]
     pts[pts < 0] = 0
-    print(box_original)
-    print(pts)
+    ordered_pts = __order_points(pts)
 
     # cropping image
-    img_cropped = rotated[pts[1][1]:pts[0][1], pts[1][0]:pts[2][0]]
+    img_cropped = rotated[ordered_pts[1][1]:ordered_pts[2][1], ordered_pts[0][0]:ordered_pts[1][0]]
 
     if imshow:
         # draw bounding box for original
@@ -96,7 +129,7 @@ def minimum_cropped(img, contour, imshow = False):
         img_cropped_RGB = cv.cvtColor(img_cropped, cv.COLOR_BGR2RGB)
 
         # show images
-        fig, axs = plt.subplots(1,3, figsize = (10,5))
+        fig, axs = plt.subplots(1,3, figsize = (20,10))
         axs[0].imshow(img_box_original)
         #axs[0].set_title("image box contour")
         axs[1].imshow(img_box_rotate)
@@ -105,6 +138,64 @@ def minimum_cropped(img, contour, imshow = False):
         plt.show()
 
     return img_cropped
+
+def SIFT_match_solution (img, solution, imshow = False):
+
+    img1 = img.copy()
+    img2 = solution.copy()
+
+    sift =  cv.SIFT_create()
+
+    kp1, des1 = sift.detectAndCompute(img1,None)
+    kp2, des2 = sift.detectAndCompute(img2,None)
+
+    FLANN_INDEX_KDTREE = 0
+    index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)
+    search_params = dict(checks = 50)
+
+    flann = cv.FlannBasedMatcher(index_params, search_params)
+
+    matches = flann.knnMatch(des1,des2,k=2)
+
+    # store all the good matches as per Lowe's ratio test.
+    good = []
+    for m,n in matches:
+    #     good.append(m)
+        if m.distance < 0.7*n.distance:
+            good.append(m)
+
+
+    MIN_MATCH_COUNT = 10
+
+    if len(good)>MIN_MATCH_COUNT:
+        src_pts = np.float32([ kp1[m.queryIdx].pt for m in good ]).reshape(-1,1,2)
+        dst_pts = np.float32([ kp2[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
+
+        M, mask = cv.findHomography(src_pts, dst_pts, cv.RANSAC,5.0)
+        matchesMask = mask.ravel().tolist()
+
+        d,h,w = img1.shape[::-1]
+        pts = np.float32([ [0,0],[0,h-1],[w-1,h-1],[w-1,0] ]).reshape(-1,1,2)
+        dst = cv.perspectiveTransform(pts,M)
+
+        img2 = cv.polylines(img2,[np.int32(dst)],True,255,3, cv.LINE_AA)
+
+    else:
+        print ("Not enough matches are found - %d/%d" % (len(good),MIN_MATCH_COUNT))
+        matchesMask = None
+
+    draw_params = dict(matchColor = (0,255,0), # draw matches in green color
+                    singlePointColor = None,
+                    matchesMask = matchesMask, # draw only inliers
+                    flags = cv.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+
+    if imshow:
+        fig, axs = plt.subplots(1,1, figsize = (20,10))
+        img3 = cv.drawMatches(img1,kp1,img2,kp2,good,None,**draw_params)
+        img3 = cv.cvtColor(img3, cv.COLOR_BGR2RGB)
+        plt.imshow(img3)
+        plt.show()
+
 
 def main():
 
@@ -115,25 +206,15 @@ def main():
     assert solution is not None, "file could not be read, check with os.path.exists()"
 
     # identify contour and crop puzzle piece
-    # _, contour = identify_contour(piece, imshow=True)
-    # cropped_piece = minimum_cropped(piece, contour, imshow=True)
+    _, contour = identify_contour(piece, imshow=False)
+    cropped_piece = minimum_cropped(piece, contour, imshow=False)
 
     # identify contour and crop solution puzzle
-    _, solution_contour = identify_contour(solution, imshow=True)
-    cropped_solution = minimum_cropped(solution, solution_contour, imshow= True)
+    _, solution_contour = identify_contour(solution, imshow=False)
+    cropped_solution = minimum_cropped(solution, solution_contour, imshow= False)
 
-    # # generate image
-    # img = np.zeros((1000, 1000), dtype=np.uint8)
-    # img = cv.line(img,(400,400),(511,511),(255,255,255),120)
-    # img = cv.line(img,(300,300),(700,500),(255,255,255),120)
-
-    # # find contours / rectangle
-    # contours,_= cv.findContours(img, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
-    # crop = minimum_cropped(img, contours[0], imshow=True)
+    SIFT_match_solution(cropped_piece, cropped_solution, imshow = True)
 
 
 if __name__ == "__main__":
     main()
-
-
-
