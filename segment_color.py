@@ -2,13 +2,12 @@ import cv2 as cv
 import numpy as np
 from matplotlib import pyplot as plt
 from scipy.spatial import distance as dist
-
-
+import math
 
 def identify_contour(img, imshow = False):
     
     # Parameters 
-    HSV_LOWER = np.array([6,17,0]) #HSV
+    HSV_LOWER = np.array([6,17,0]) # HSV
     HSV_UPPER = np.array([35,115,210])
     GAUSSIAN_BLUR = (9,9)
     MIN_AREA_CONTOUR = 100
@@ -85,8 +84,6 @@ def __order_points(pts):
     # bottom-right, and bottom-left order
     return np.array([tl, tr, br, bl], dtype="int32")
 
-def __perspective_transform(): pass
-
 def minimum_cropped(img, contour, imshow = False):
     
     # find the minimum box rect of the contour
@@ -139,7 +136,7 @@ def minimum_cropped(img, contour, imshow = False):
 
     return img_cropped
 
-def SIFT_match_solution (img, solution, imshow = False):
+def SIFT_match_solution(img, solution, imshow = False):
 
     img1 = img.copy()
     img2 = solution.copy()
@@ -160,7 +157,6 @@ def SIFT_match_solution (img, solution, imshow = False):
     # store all the good matches as per Lowe's ratio test.
     good = []
     for m,n in matches:
-    #     good.append(m)
         if m.distance < 0.7*n.distance:
             good.append(m)
 
@@ -168,6 +164,9 @@ def SIFT_match_solution (img, solution, imshow = False):
     MIN_MATCH_COUNT = 10
 
     if len(good)>MIN_MATCH_COUNT:
+        src_pts_avg = np.float32([ kp1[m.queryIdx].pt for m in good ]).mean(axis=0)
+        dst_pts_avg = np.float32([ kp2[m.trainIdx].pt for m in good ]).mean(axis=0)
+
         src_pts = np.float32([ kp1[m.queryIdx].pt for m in good ]).reshape(-1,1,2)
         dst_pts = np.float32([ kp2[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
 
@@ -196,6 +195,50 @@ def SIFT_match_solution (img, solution, imshow = False):
         plt.imshow(img3)
         plt.show()
 
+    return [dst_pts_avg]
+    
+def draw_grid_solution(solution, imshow = False):
+
+    height, width = solution.shape[:2]
+
+    pts = []
+    for i in range(width//8, width, width//4):
+        for j in range(height//24, height, height//12):
+            pts.append([i,j])
+
+    if imshow:
+        fig, axs = plt.subplots(1,1, figsize = (20,10))
+        solution_draw = solution.copy()
+        for pt in pts:
+            solution_draw = cv.circle(solution_draw, pt, radius=10, color=(0,0,255), thickness=-1)
+        solution_draw = cv.cvtColor(solution_draw, cv.COLOR_BGR2RGB)
+        plt.imshow(solution_draw)
+        plt.show()
+    return pts
+
+def find_puzzle_match(pts, dst_pts, image_hw):
+
+    height, width = image_hw
+    
+    # find distance helper function
+    def distance(x1, y1, x2, y2):
+        return math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+    
+    closest_distance = float('inf')
+    closest_point = None
+
+    for pt in pts:
+        dist = distance(pt[0], pt[1], dst_pts[0][0], dst_pts[0][1])
+        if dist < closest_distance:
+            closest_distance = dist
+            closest_point = pt
+    
+    return [math.ceil(((closest_point[0] - width//8) / (width//4)) + 1), 
+            math.ceil(((closest_point[1] - height//24) / (height//12)) + 1)]
+
+
+
+
 
 def main():
 
@@ -205,6 +248,8 @@ def main():
     assert piece is not None, "file could not be read, check with os.path.exists()"
     assert solution is not None, "file could not be read, check with os.path.exists()"
 
+    img_hw = solution.shape[:2] # height, width
+
     # identify contour and crop puzzle piece
     _, contour = identify_contour(piece, imshow=False)
     cropped_piece = minimum_cropped(piece, contour, imshow=False)
@@ -213,7 +258,13 @@ def main():
     _, solution_contour = identify_contour(solution, imshow=False)
     cropped_solution = minimum_cropped(solution, solution_contour, imshow= False)
 
-    SIFT_match_solution(cropped_piece, cropped_solution, imshow = True)
+    pts = draw_grid_solution(cropped_solution, False)
+
+    dst_pts_avg = SIFT_match_solution(cropped_piece, cropped_solution, imshow = True)
+
+    print(find_puzzle_match(pts, dst_pts_avg, img_hw))
+
+
 
 
 if __name__ == "__main__":
