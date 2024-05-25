@@ -201,6 +201,7 @@ def draw_grid_solution(solution, imshow = False):
 
     height, width = solution.shape[:2]
 
+    # create center points of each puzzle piece in solution
     pts = []
     for i in range(width//8, width, width//4):
         for j in range(height//24, height, height//12):
@@ -210,7 +211,7 @@ def draw_grid_solution(solution, imshow = False):
         fig, axs = plt.subplots(1,1, figsize = (20,10))
         solution_draw = solution.copy()
         for pt in pts:
-            solution_draw = cv.circle(solution_draw, pt, radius=10, color=(0,0,255), thickness=-1)
+            solution_draw = cv.circle(solution_draw, pt, radius=10, color=(255,0,0), thickness=-1)
         solution_draw = cv.cvtColor(solution_draw, cv.COLOR_BGR2RGB)
         plt.imshow(solution_draw)
         plt.show()
@@ -227,6 +228,7 @@ def find_puzzle_match(pts, dst_pts, image_hw):
     closest_distance = float('inf')
     closest_point = None
 
+    # go through every pts of puzzle in solution and get closest one
     for pt in pts:
         dist = distance(pt[0], pt[1], dst_pts[0][0], dst_pts[0][1])
         if dist < closest_distance:
@@ -235,9 +237,6 @@ def find_puzzle_match(pts, dst_pts, image_hw):
     
     return [math.ceil(((closest_point[0] - width//8) / (width//4)) + 1), 
             math.ceil(((closest_point[1] - height//24) / (height//12)) + 1)]
-
-
-
 
 
 def main():
@@ -251,14 +250,14 @@ def main():
     img_hw = solution.shape[:2] # height, width
 
     # identify contour and crop puzzle piece
-    _, contour = identify_contour(piece, imshow=False)
-    cropped_piece = minimum_cropped(piece, contour, imshow=False)
+    _, contour = identify_contour(piece, imshow=True)
+    cropped_piece = minimum_cropped(piece, contour, imshow=True)
 
     # identify contour and crop solution puzzle
     _, solution_contour = identify_contour(solution, imshow=False)
     cropped_solution = minimum_cropped(solution, solution_contour, imshow= False)
 
-    pts = draw_grid_solution(cropped_solution, False)
+    pts = draw_grid_solution(cropped_solution, True)
 
     dst_pts_avg = SIFT_match_solution(cropped_piece, cropped_solution, imshow = True)
 
